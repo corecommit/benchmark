@@ -1,0 +1,15 @@
+{
+  "runner_label": "ubuntu-22.04",
+  "os": "Linux",
+  "os_version": "#78~22.04.1-Ubuntu SMP Thu Sep 24 18:46:45 UTC 2026",
+  "arch": "x86_64",
+  "python": "3.10.12",
+  "run_id": "45212075365",
+  "cpu_model": "AMD EPYC 7763 64-Core Processor",
+  "cpu_cores": 4,
+  "ram_gb": 15.6,
+  "cpu_bench_seconds": 0.023,
+  "disk_write_mbps": 1397.2,
+  "disk_read_mbps": 11133.3,
+  "memory_200mb_seconds": 0.1261
+}
