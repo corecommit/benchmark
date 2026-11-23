@@ -1,0 +1,15 @@
+{
+  "runner_label": "ubuntu-24.04",
+  "os": "Linux",
+  "os_version": "#17~24.04.1-Ubuntu SMP PREEMPT Thu Sep 24 18:46:57 UTC 2026",
+  "arch": "x86_64",
+  "python": "3.12.3",
+  "run_id": "45210678621",
+  "cpu_model": "Intel(R) Xeon(R) 6973P-C",
+  "cpu_cores": 4,
+  "ram_gb": 15.6,
+  "cpu_bench_seconds": 0.0158,
+  "disk_write_mbps": 4593.1,
+  "disk_read_mbps": 9688.8,
+  "memory_200mb_seconds": 0.0782
+}
