@@ -3,6 +3,10 @@ name: "Benchmark GitHub-Hosted Runners"
 on:
   workflow_dispatch:   # Manual trigger only
 
+# Required so the GITHUB_TOKEN can push commits back to the repo
+permissions:
+  contents: write
+
 jobs:
   benchmark:
     strategy:
@@ -11,37 +15,23 @@ jobs:
         include:
           # ---------- Linux ----------
           - label: ubuntu-slim
-            os: linux
           - label: ubuntu-latest
-            os: linux
           - label: ubuntu-24.04
-            os: linux
           - label: ubuntu-22.04
-            os: linux
           - label: ubuntu-24.04-arm
-            os: linux
 
           # ---------- Windows ----------
           - label: windows-latest
-            os: windows
           - label: windows-2025
-            os: windows
           - label: windows-2022
-            os: windows
           - label: windows-11-arm
-            os: windows
 
           # ---------- macOS ----------
           - label: macos-latest
-            os: macos
           - label: macos-14
-            os: macos
           - label: macos-15
-            os: macos
           - label: macos-26
-            os: macos
           - label: macos-15-intel
-            os: macos
 
     runs-on: ${{ matrix.label }}
     timeout-minutes: 15
@@ -52,6 +42,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # full history so `git pull --rebase` is safe
+          persist-credentials: true
 
       - name: Run cross-platform benchmarks
         shell: bash
@@ -65,6 +58,7 @@ jobs:
               "os_version": platform.version(),
               "arch": platform.machine(),
               "python": platform.python_version(),
+              "run_id": os.environ.get("GITHUB_RUN_ID", ""),
           }
 
           # ---------- CPU model & cores ----------
@@ -139,7 +133,10 @@ jobs:
           info["memory_200mb_seconds"] = round(time.perf_counter() - start, 4)
           del block
 
-          with open("benchmark_result.json", "w") as f:
+          # Write result into benchmarks/ so it can be committed
+          os.makedirs("benchmarks", exist_ok=True)
+          out_path = os.path.join("benchmarks", f"{info['runner_label']}.json")
+          with open(out_path, "w") as f:
               json.dump(info, f, indent=2)
           print(json.dumps(info, indent=2))
           PYEOF
@@ -151,35 +148,55 @@ jobs:
             python3 benchmark.py
           fi
 
-      - name: Upload result
-        uses: actions/upload-artifact@v4
-        with:
-          name: result-${{ matrix.label }}
-          path: benchmark_result.json
+      - name: Commit benchmark result to repo
+        shell: bash
+        env:
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add benchmarks/
+          if git diff --cached --quiet; then
+            echo "No changes to commit (result identical)."
+            exit 0
+          fi
+
+          git commit -m "benchmark: $MATRIX_LABEL (run ${{ github.run_id }})"
+
+          # Push with retry — other matrix jobs may be racing us
+          for attempt in 1 2 3 4 5; do
+            if git pull --rebase origin "$BRANCH" && git push origin "HEAD:$BRANCH"; then
+              echo "Pushed successfully on attempt $attempt."
+              exit 0
+            fi
+            echo "Push failed on attempt $attempt, retrying..."
+            sleep $((attempt * 3))
+          done
+
+          echo "All push attempts failed." >&2
+          exit 1
 
   summarize:
     needs: benchmark
     runs-on: ubuntu-latest
     steps:
-      - name: Download all benchmark artifacts
-        uses: actions/download-artifact@v4
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
-          path: results
-          pattern: result-*
-          merge-multiple: false
+          fetch-depth: 0
 
       - name: Generate comparison table
         shell: bash
         run: |
           cat > summarize.py << 'PYEOF'
-          import json, os, glob
+          import json, glob
 
           rows = []
-          for f in glob.glob("results/result-*/*.json"):
+          for f in glob.glob("benchmarks/*.json"):
               with open(f) as fh:
                   rows.append(json.load(fh))
 
-          # Sort: Linux, Windows, macOS
           order = {"Linux": 0, "Windows": 1, "Darwin": 2}
           rows.sort(key=lambda r: (order.get(r.get("os"), 9), r.get("runner_label", "")))
 
@@ -203,11 +220,37 @@ jobs:
                   str(r.get("memory_200mb_seconds", "")),
               ]) + " |")
 
-          summary = "\n".join(lines)
-          with open("summary.md", "w") as f:
+          summary = "# GitHub-Hosted Runner Benchmark\n\n" + "\n".join(lines) + "\n"
+          with open("benchmarks/SUMMARY.md", "w") as f:
               f.write(summary)
           print(summary)
           PYEOF
 
           python3 summarize.py
-          cat summary.md >> $GITHUB_STEP_SUMMARY
+          cat benchmarks/SUMMARY.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Commit summary to repo
+        shell: bash
+        env:
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add benchmarks/SUMMARY.md
+          if git diff --cached --quiet; then
+            echo "Summary unchanged."
+            exit 0
+          fi
+
+          git commit -m "benchmark: refresh SUMMARY.md (run ${{ github.run_id }})"
+
+          for attempt in 1 2 3 4 5; do
+            if git pull --rebase origin "$BRANCH" && git push origin "HEAD:$BRANCH"; then
+              echo "Pushed successfully on attempt $attempt."
+              exit 0
+            fi
+            echo "Push failed on attempt $attempt, retrying..."
+            sleep $((attempt * 3))
+          done
+          exit 1
