@@ -1,0 +1,15 @@
+{
+  "runner_label": "windows-11-arm",
+  "os": "Windows",
+  "os_version": "10.0.26200",
+  "arch": "ARM64",
+  "python": "3.13.17",
+  "run_id": "45210678621",
+  "cpu_model": "ARMv8 (64-bit) Family 8 Model D49 Revision   0, MICROSOFT CORPORATION",
+  "cpu_cores": 4,
+  "ram_gb": 16.0,
+  "cpu_bench_seconds": 0.0787,
+  "disk_write_mbps": 3088.3,
+  "disk_read_mbps": 4531.5,
+  "memory_200mb_seconds": 0.0212
+}
