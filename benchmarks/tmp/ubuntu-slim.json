@@ -4,12 +4,12 @@
   "os_version": "#1 SMP Tue Nov 25 00:36:57 UTC 2025",
   "arch": "x86_64",
   "python": "3.12.3",
-  "run_id": "45194986684",
+  "run_id": "45195780260",
   "cpu_model": "AMD EPYC 7763 64-Core Processor",
   "cpu_cores": 1,
   "ram_gb": 5.0,
-  "cpu_bench_seconds": 0.0273,
-  "disk_write_mbps": 1510.3,
-  "disk_read_mbps": 13416.9,
-  "memory_200mb_seconds": 0.046
+  "cpu_bench_seconds": 0.0527,
+  "disk_write_mbps": 1330.0,
+  "disk_read_mbps": 11485.3,
+  "memory_200mb_seconds": 0.0604
 }
