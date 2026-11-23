@@ -7,178 +7,50 @@ permissions:
   contents: write
 
 jobs:
+  # Run the benchmark on every runner
   benchmark:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # ---------- Linux ----------
-          - label: ubuntu-slim
-          - label: ubuntu-latest
-          - label: ubuntu-24.04
-          - label: ubuntu-22.04
-          - label: ubuntu-24.04-arm
-
-          # ---------- Windows ----------
-          - label: windows-latest
-          - label: windows-2025
-          - label: windows-2022
-          - label: windows-11-arm
-
+    name: Benchmark (${{ matrix.label }})
     runs-on: ${{ matrix.label }}
     timeout-minutes: 15
 
+    strategy:
+      fail-fast: false
+      matrix:
+        label:
+          # Linux
+          - ubuntu-slim
+          - ubuntu-latest
+          - ubuntu-24.04
+          - ubuntu-22.04
+          - ubuntu-24.04-arm
+          # Windows
+          - windows-latest
+          - windows-2025
+          - windows-2022
+          - windows-11-arm
+
     env:
       MATRIX_LABEL: ${{ matrix.label }}
+      BRANCH: ${{ github.ref_name }}
 
     steps:
-      - name: Checkout
+      - name: Checkout (test/ folder only)
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          sparse-checkout: |
+            test
+            benchmarks
 
-      - name: Run cross-platform benchmarks
+      - name: Run benchmark
         shell: bash
         run: |
-          cat > benchmark.py << 'PYEOF'
-          import json, os, platform, time, tempfile, hashlib, multiprocessing, subprocess, sys
-
-          info = {
-              "runner_label": os.environ.get("MATRIX_LABEL", "unknown"),
-              "os": platform.system(),          # Linux / Windows
-              "os_version": platform.version(),
-              "arch": platform.machine(),
-              "python": platform.python_version(),
-              "run_id": os.environ.get("GITHUB_RUN_ID", ""),
-          }
-
-          # ---------- CPU model & cores ----------
-          if platform.system() == "Linux":
-              try:
-                  with open("/proc/cpuinfo") as f:
-                      for line in f:
-                          if "model name" in line:
-                              info["cpu_model"] = line.split(":")[1].strip()
-                              break
-              except FileNotFoundError:
-                  pass
-              info["cpu_cores"] = multiprocessing.cpu_count()
-          elif platform.system() == "Windows":
-              info["cpu_cores"] = os.cpu_count()
-              info["cpu_model"] = platform.processor()
-
-          # ---------- RAM ----------
-          def detect_ram_gb():
-              if platform.system() == "Linux":
-                  for path in (
-                      "/sys/fs/cgroup/memory.max",
-                      "/sys/fs/cgroup/memory/memory.limit_in_bytes",
-                  ):
-                      try:
-                          with open(path) as f:
-                              val = f.read().strip()
-                          if val and val != "max":
-                              n = int(val)
-                              if 0 < n < (1 << 60):
-                                  return round(n / 1024**3, 1)
-                      except (FileNotFoundError, PermissionError, ValueError):
-                          pass
-                  try:
-                      with open("/proc/meminfo") as f:
-                          for line in f:
-                              if line.startswith("MemTotal:"):
-                                  return round(int(line.split()[1]) / 1024**2, 1)
-                  except FileNotFoundError:
-                      pass
-              elif platform.system() == "Windows":
-                  try:
-                      out = subprocess.check_output(
-                          ["powershell", "-NoProfile", "-NonInteractive", "-Command",
-                           "(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory"],
-                          stderr=subprocess.DEVNULL,
-                      ).decode().strip()
-                      if out.isdigit():
-                          return round(int(out) / 1024**3, 1)
-                  except (FileNotFoundError, subprocess.CalledProcessError):
-                      pass
-                  try:
-                      import ctypes
-                      class MEMORYSTATUSEX(ctypes.Structure):
-                          _fields_ = [
-                              ("dwLength", ctypes.c_ulong),
-                              ("dwMemoryLoad", ctypes.c_ulong),
-                              ("ullTotalPhys", ctypes.c_ulonglong),
-                              ("ullAvailPhys", ctypes.c_ulonglong),
-                              ("ullTotalPageFile", ctypes.c_ulonglong),
-                              ("ullAvailPageFile", ctypes.c_ulonglong),
-                              ("ullTotalVirtual", ctypes.c_ulonglong),
-                              ("ullAvailVirtual", ctypes.c_ulonglong),
-                              ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
-                          ]
-                      stat = MEMORYSTATUSEX()
-                      stat.dwLength = ctypes.sizeof(stat)
-                      if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat)):
-                          return round(stat.ullTotalPhys / 1024**3, 1)
-                  except Exception:
-                      pass
-              return None
-
-          info["ram_gb"] = detect_ram_gb()
-          if info["ram_gb"] is None:
-              print("[warn] RAM detection failed", file=sys.stderr)
-
-          # ---------- CPU benchmark: SHA-256 loop ----------
-          data = b"x" * 1024
-          start = time.perf_counter()
-          for _ in range(20_000):
-              hashlib.sha256(data).hexdigest()
-          info["cpu_bench_seconds"] = round(time.perf_counter() - start, 4)
-
-          # ---------- Disk benchmark ----------
-          tmpdir = tempfile.gettempdir()
-          filepath = os.path.join(tmpdir, "bench_disk.bin")
-          chunk = os.urandom(1024 * 1024)
-
-          start = time.perf_counter()
-          with open(filepath, "wb") as f:
-              for _ in range(100):
-                  f.write(chunk)
-          write_time = time.perf_counter() - start
-
-          start = time.perf_counter()
-          with open(filepath, "rb") as f:
-              while f.read(1024 * 1024):
-                  pass
-          read_time = time.perf_counter() - start
-
-          os.remove(filepath)
-          info["disk_write_mbps"] = round(100 / write_time, 1) if write_time else None
-          info["disk_read_mbps"]  = round(100 / read_time, 1)  if read_time  else None
-
-          # ---------- Memory benchmark ----------
-          start = time.perf_counter()
-          block = bytearray(200 * 1024 * 1024)
-          for i in range(0, len(block), 4096):
-              block[i] = 1
-          info["memory_200mb_seconds"] = round(time.perf_counter() - start, 4)
-          del block
-
-          os.makedirs("benchmarks/tmp", exist_ok=True)
-          with open(f"benchmarks/tmp/{info['runner_label']}.json", "w") as f:
-              json.dump(info, f, indent=2)
-          print(json.dumps(info, indent=2))
-          PYEOF
-
-          if [[ "$RUNNER_OS" == "Windows" ]]; then
-            python benchmark.py
-          else
-            python3 benchmark.py
-          fi
+          PYTHON=python3
+          [[ "$RUNNER_OS" == "Windows" ]] && PYTHON=python
+          "$PYTHON" test/benchmark.py
 
       - name: Commit result to transient folder
         shell: bash
-        env:
-          BRANCH: ${{ github.ref_name }}
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -201,20 +73,27 @@ jobs:
           done
           exit 1
 
+  # Aggregate all results into benchmarks/SUMMARY.md
   summarize:
+    name: Summarize
     needs: benchmark
     runs-on: ubuntu-latest
+
+    env:
+      BRANCH: ${{ github.ref_name }}
+
     steps:
-      - name: Checkout
+      - name: Checkout (test/ folder only)
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          sparse-checkout: |
+            test
+            benchmarks
 
-      # ── Sync to the latest branch tip so we see the benchmark jobs' commits ──
+      # Sync to the latest branch tip so we see the benchmark jobs' commits
       - name: Sync to latest branch tip
         shell: bash
-        env:
-          BRANCH: ${{ github.ref_name }}
         run: |
           git fetch origin "$BRANCH"
           git reset --hard "origin/$BRANCH"
@@ -224,118 +103,14 @@ jobs:
           echo "--- is benchmarks/ ignored? ---"
           git check-ignore -v benchmarks/tmp/ 2>/dev/null || echo "(not ignored)"
 
-      - name: Generate single SUMMARY.md and clean up
+      - name: Generate SUMMARY.md and clean up
         shell: bash
         run: |
-          cat > summarize.py << 'PYEOF'
-          import json, glob, os, datetime, sys
-
-          files = sorted(glob.glob("benchmarks/tmp/*.json"))
-          print(f"[info] found {len(files)} benchmark file(s): {files}")
-
-          if not files:
-              print("ERROR: no benchmark JSON files found in benchmarks/tmp/", file=sys.stderr)
-              print("This usually means the benchmark jobs failed to commit,", file=sys.stderr)
-              print("or the checkout is on a stale commit.", file=sys.stderr)
-              sys.exit(1)
-
-          rows = []
-          for f in files:
-              with open(f) as fh:
-                  rows.append(json.load(fh))
-
-          OS_DISPLAY = {"Linux": "Linux", "Windows": "Windows"}
-
-          sections = {"Linux": [], "Windows": []}
-          for r in rows:
-              key = OS_DISPLAY.get(r.get("os"), r.get("os", "Other"))
-              sections.setdefault(key, []).append(r)
-
-          for k in sections:
-              sections[k].sort(key=lambda r: r.get("runner_label", ""))
-
-          def best(metric, mode="min"):
-              vals = [(r.get(metric), r.get("runner_label"))
-                      for r in rows if r.get(metric) is not None]
-              if not vals:
-                  return (None, None)
-              return min(vals) if mode == "min" else max(vals)
-
-          cpu_win    = best("cpu_bench_seconds", "min")
-          disk_w_win = best("disk_write_mbps", "max")
-          disk_r_win = best("disk_read_mbps", "max")
-          mem_win    = best("memory_200mb_seconds", "min")
-
-          def fmt_pair(pair, unit=""):
-              val, label = pair
-              if val is None or label is None:
-                  return "—"
-              return f"{label} ({val}{unit})"
-
-          lines = []
-          lines.append("# GitHub-Hosted Runner Benchmark\n")
-          lines.append(f"_Generated: {datetime.datetime.utcnow().isoformat(timespec='seconds')}Z "
-                       f"| Run: {os.environ.get('GITHUB_RUN_ID','local')}_\n")
-          lines.append("## 🏆 Fastest by Category\n")
-          lines.append(f"- **CPU (lower is better):** {fmt_pair(cpu_win, 's')}")
-          lines.append(f"- **Disk write (higher is better):** {fmt_pair(disk_w_win, ' MB/s')}")
-          lines.append(f"- **Disk read (higher is better):** {fmt_pair(disk_r_win, ' MB/s')}")
-          lines.append(f"- **Memory (lower is better):** {fmt_pair(mem_win, 's')}\n")
-
-          headers = [
-              "Runner", "OS Version", "Arch", "Cores", "RAM (GB)",
-              "CPU (s)", "Disk W (MB/s)", "Disk R (MB/s)", "Mem (s)"
-          ]
-
-          def render_table(items):
-              out = ["| " + " | ".join(headers) + " |",
-                     "|" + "|".join(["---"] * len(headers)) + "|"]
-              for r in items:
-                  out.append("| " + " | ".join([
-                      f"`{r.get('runner_label','')}`",
-                      (r.get("os_version","") or "")[:60],
-                      r.get("arch",""),
-                      str(r.get("cpu_cores","")),
-                      str(r.get("ram_gb","")),
-                      str(r.get("cpu_bench_seconds","")),
-                      str(r.get("disk_write_mbps","")),
-                      str(r.get("disk_read_mbps","")),
-                      str(r.get("memory_200mb_seconds","")),
-                  ]) + " |")
-              return out
-
-          emoji = {"Linux": "🐧", "Windows": "🪟"}
-          for family in ("Linux", "Windows"):
-              items = sections.get(family, [])
-              if not items:
-                  continue
-              lines.append(f"## {emoji.get(family,'')} {family}\n")
-              lines.extend(render_table(items))
-              lines.append("")
-
-          os.makedirs("benchmarks", exist_ok=True)
-          with open("benchmarks/SUMMARY.md", "w") as f:
-              f.write("\n".join(lines))
-
-          for f in glob.glob("benchmarks/tmp/*.json"):
-              os.remove(f)
-          for f in glob.glob("benchmarks/*.json"):
-              os.remove(f)
-          try:
-              os.rmdir("benchmarks/tmp")
-          except OSError:
-              pass
-
-          print("\n".join(lines))
-          PYEOF
-
-          python3 summarize.py
+          python3 test/summarize.py
           cat benchmarks/SUMMARY.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Commit SUMMARY.md and cleanup
         shell: bash
-        env:
-          BRANCH: ${{ github.ref_name }}
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
