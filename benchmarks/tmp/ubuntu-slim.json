@@ -1,0 +1,15 @@
+{
+  "runner_label": "ubuntu-slim",
+  "os": "Linux",
+  "os_version": "#1 SMP Tue Nov 25 00:36:57 UTC 2025",
+  "arch": "x86_64",
+  "python": "3.12.3",
+  "run_id": "45210678621",
+  "cpu_model": "AMD EPYC 9V74 80-Core Processor",
+  "cpu_cores": 1,
+  "ram_gb": 5.0,
+  "cpu_bench_seconds": 0.0859,
+  "disk_write_mbps": 685.8,
+  "disk_read_mbps": 4280.1,
+  "memory_200mb_seconds": 0.1035
+}
