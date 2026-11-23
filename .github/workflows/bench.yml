@@ -7,9 +7,7 @@ permissions:
   contents: write
 
 jobs:
-  # ===========================================================================
   # Run the benchmark on every runner
-  # ===========================================================================
   benchmark:
     name: Benchmark (${{ matrix.label }})
     runs-on: ${{ matrix.label }}
@@ -75,9 +73,7 @@ jobs:
           done
           exit 1
 
-  # ===========================================================================
   # Aggregate all results into benchmarks/SUMMARY.md
-  # ===========================================================================
   summarize:
     name: Summarize
     needs: benchmark
