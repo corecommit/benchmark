@@ -1,0 +1,213 @@
+name: "Benchmark GitHub-Hosted Runners"
+
+on:
+  workflow_dispatch:   # Manual trigger only
+
+jobs:
+  benchmark:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # ---------- Linux ----------
+          - label: ubuntu-slim
+            os: linux
+          - label: ubuntu-latest
+            os: linux
+          - label: ubuntu-24.04
+            os: linux
+          - label: ubuntu-22.04
+            os: linux
+          - label: ubuntu-24.04-arm
+            os: linux
+
+          # ---------- Windows ----------
+          - label: windows-latest
+            os: windows
+          - label: windows-2025
+            os: windows
+          - label: windows-2022
+            os: windows
+          - label: windows-11-arm
+            os: windows
+
+          # ---------- macOS ----------
+          - label: macos-latest
+            os: macos
+          - label: macos-14
+            os: macos
+          - label: macos-15
+            os: macos
+          - label: macos-26
+            os: macos
+          - label: macos-15-intel
+            os: macos
+
+    runs-on: ${{ matrix.label }}
+    timeout-minutes: 15
+
+    env:
+      MATRIX_LABEL: ${{ matrix.label }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run cross-platform benchmarks
+        shell: bash
+        run: |
+          cat > benchmark.py << 'PYEOF'
+          import json, os, platform, time, tempfile, hashlib, multiprocessing, subprocess
+
+          info = {
+              "runner_label": os.environ.get("MATRIX_LABEL", "unknown"),
+              "os": platform.system(),
+              "os_version": platform.version(),
+              "arch": platform.machine(),
+              "python": platform.python_version(),
+          }
+
+          # ---------- CPU model & cores ----------
+          if platform.system() in ("Linux", "Darwin"):
+              try:
+                  with open("/proc/cpuinfo") as f:
+                      for line in f:
+                          if "model name" in line:
+                              info["cpu_model"] = line.split(":")[1].strip()
+                              break
+              except FileNotFoundError:
+                  pass
+              info["cpu_cores"] = multiprocessing.cpu_count()
+          elif platform.system() == "Windows":
+              info["cpu_cores"] = os.cpu_count()
+              info["cpu_model"] = platform.processor()
+
+          # ---------- RAM (approximate) ----------
+          try:
+              if platform.system() == "Linux":
+                  with open("/proc/meminfo") as f:
+                      for line in f:
+                          if "MemTotal" in line:
+                              info["ram_gb"] = round(int(line.split()[1]) / 1024**2, 1)
+                              break
+              elif platform.system() == "Darwin":
+                  out = subprocess.check_output(["sysctl", "-n", "hw.memsize"]).decode().strip()
+                  info["ram_gb"] = round(int(out) / 1024**3, 1)
+              elif platform.system() == "Windows":
+                  out = subprocess.check_output(
+                      ["wmic", "computersystem", "get", "TotalPhysicalMemory"]
+                  ).decode()
+                  lines = [l.strip() for l in out.splitlines() if l.strip().isdigit()]
+                  if lines:
+                      info["ram_gb"] = round(int(lines[0]) / 1024**3, 1)
+          except Exception:
+              info["ram_gb"] = None
+
+          # ---------- CPU benchmark: SHA-256 loop ----------
+          data = b"x" * 1024
+          start = time.perf_counter()
+          for _ in range(20_000):
+              hashlib.sha256(data).hexdigest()
+          info["cpu_bench_seconds"] = round(time.perf_counter() - start, 4)
+
+          # ---------- Disk benchmark: write + read 100 MB ----------
+          tmpdir = tempfile.gettempdir()
+          filepath = os.path.join(tmpdir, "bench_disk.bin")
+          chunk = os.urandom(1024 * 1024)  # 1 MB
+
+          start = time.perf_counter()
+          with open(filepath, "wb") as f:
+              for _ in range(100):
+                  f.write(chunk)
+          write_time = time.perf_counter() - start
+
+          start = time.perf_counter()
+          with open(filepath, "rb") as f:
+              while f.read(1024 * 1024):
+                  pass
+          read_time = time.perf_counter() - start
+
+          os.remove(filepath)
+          info["disk_write_mbps"] = round(100 / write_time, 1) if write_time else None
+          info["disk_read_mbps"]  = round(100 / read_time, 1)  if read_time  else None
+
+          # ---------- Memory benchmark: touch 200 MB ----------
+          start = time.perf_counter()
+          block = bytearray(200 * 1024 * 1024)
+          for i in range(0, len(block), 4096):
+              block[i] = 1
+          info["memory_200mb_seconds"] = round(time.perf_counter() - start, 4)
+          del block
+
+          with open("benchmark_result.json", "w") as f:
+              json.dump(info, f, indent=2)
+          print(json.dumps(info, indent=2))
+          PYEOF
+
+          # Pick the right Python executable
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            python benchmark.py
+          else
+            python3 benchmark.py
+          fi
+
+      - name: Upload result
+        uses: actions/upload-artifact@v4
+        with:
+          name: result-${{ matrix.label }}
+          path: benchmark_result.json
+
+  summarize:
+    needs: benchmark
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all benchmark artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: results
+          pattern: result-*
+          merge-multiple: false
+
+      - name: Generate comparison table
+        shell: bash
+        run: |
+          cat > summarize.py << 'PYEOF'
+          import json, os, glob
+
+          rows = []
+          for f in glob.glob("results/result-*/*.json"):
+              with open(f) as fh:
+                  rows.append(json.load(fh))
+
+          # Sort: Linux, Windows, macOS
+          order = {"Linux": 0, "Windows": 1, "Darwin": 2}
+          rows.sort(key=lambda r: (order.get(r.get("os"), 9), r.get("runner_label", "")))
+
+          headers = [
+              "Runner", "OS", "Arch", "Cores", "RAM (GB)",
+              "CPU bench (s)", "Disk Write (MB/s)", "Disk Read (MB/s)", "Memory 200MB (s)"
+          ]
+          lines = ["| " + " | ".join(headers) + " |",
+                   "|" + "|".join(["---"] * len(headers)) + "|"]
+
+          for r in rows:
+              lines.append("| " + " | ".join([
+                  r.get("runner_label", ""),
+                  (r.get("os", "") + " " + r.get("os_version", "")).strip(),
+                  r.get("arch", ""),
+                  str(r.get("cpu_cores", "")),
+                  str(r.get("ram_gb", "")),
+                  str(r.get("cpu_bench_seconds", "")),
+                  str(r.get("disk_write_mbps", "")),
+                  str(r.get("disk_read_mbps", "")),
+                  str(r.get("memory_200mb_seconds", "")),
+              ]) + " |")
+
+          summary = "\n".join(lines)
+          with open("summary.md", "w") as f:
+              f.write(summary)
+          print(summary)
+          PYEOF
+
+          python3 summarize.py
+          cat summary.md >> $GITHUB_STEP_SUMMARY
