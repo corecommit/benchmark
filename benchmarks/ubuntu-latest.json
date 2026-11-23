@@ -1,0 +1,15 @@
+{
+  "runner_label": "ubuntu-latest",
+  "os": "Linux",
+  "os_version": "#21-Ubuntu SMP PREEMPT Tue Oct 27 22:34:38 UTC 2026",
+  "arch": "x86_64",
+  "python": "3.14.4",
+  "run_id": "45193682327",
+  "cpu_model": "INTEL(R) XEON(R) PLATINUM 8573C",
+  "cpu_cores": 2,
+  "ram_gb": 7.7,
+  "cpu_bench_seconds": 0.0208,
+  "disk_write_mbps": 4396.9,
+  "disk_read_mbps": 9946.7,
+  "memory_200mb_seconds": 0.1209
+}
