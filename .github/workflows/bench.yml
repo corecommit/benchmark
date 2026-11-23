@@ -210,14 +210,37 @@ jobs:
         with:
           fetch-depth: 0
 
+      # ── Sync to the latest branch tip so we see the benchmark jobs' commits ──
+      - name: Sync to latest branch tip
+        shell: bash
+        env:
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          git fetch origin "$BRANCH"
+          git reset --hard "origin/$BRANCH"
+          echo "Now at: $(git rev-parse --short HEAD) ($(git log -1 --format=%s))"
+          echo "--- benchmarks/tmp contents: ---"
+          ls -la benchmarks/tmp/ 2>/dev/null || echo "(no benchmarks/tmp directory!)"
+          echo "--- is benchmarks/ ignored? ---"
+          git check-ignore -v benchmarks/tmp/ 2>/dev/null || echo "(not ignored)"
+
       - name: Generate single SUMMARY.md and clean up
         shell: bash
         run: |
           cat > summarize.py << 'PYEOF'
-          import json, glob, os, datetime
+          import json, glob, os, datetime, sys
+
+          files = sorted(glob.glob("benchmarks/tmp/*.json"))
+          print(f"[info] found {len(files)} benchmark file(s): {files}")
+
+          if not files:
+              print("ERROR: no benchmark JSON files found in benchmarks/tmp/", file=sys.stderr)
+              print("This usually means the benchmark jobs failed to commit,", file=sys.stderr)
+              print("or the checkout is on a stale commit.", file=sys.stderr)
+              sys.exit(1)
 
           rows = []
-          for f in glob.glob("benchmarks/tmp/*.json"):
+          for f in files:
               with open(f) as fh:
                   rows.append(json.load(fh))
 
@@ -231,7 +254,6 @@ jobs:
           for k in sections:
               sections[k].sort(key=lambda r: r.get("runner_label", ""))
 
-          # Winners across all rows
           def best(metric, mode="min"):
               vals = [(r.get(metric), r.get("runner_label"))
                       for r in rows if r.get(metric) is not None]
@@ -295,7 +317,6 @@ jobs:
           with open("benchmarks/SUMMARY.md", "w") as f:
               f.write("\n".join(lines))
 
-          # Clean up all JSONs (transient + any legacy leftovers)
           for f in glob.glob("benchmarks/tmp/*.json"):
               os.remove(f)
           for f in glob.glob("benchmarks/*.json"):
