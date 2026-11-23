@@ -1,0 +1,14 @@
+{
+  "runner_label": "ubuntu-24.04-arm",
+  "os": "Linux",
+  "os_version": "#17~24.04.1-Ubuntu SMP PREEMPT Thu Sep 24 19:06:39 UTC 2026",
+  "arch": "aarch64",
+  "python": "3.12.3",
+  "run_id": "45194358863",
+  "cpu_cores": 2,
+  "ram_gb": 7.7,
+  "cpu_bench_seconds": 0.019,
+  "disk_write_mbps": 5364.0,
+  "disk_read_mbps": 12561.2,
+  "memory_200mb_seconds": 0.0579
+}
