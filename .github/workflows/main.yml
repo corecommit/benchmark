@@ -1,0 +1,136 @@
+name: "Benchmark GitHub-Hosted Runners"
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  # ===========================================================================
+  # Run the benchmark on every runner
+  # ===========================================================================
+  benchmark:
+    name: Benchmark (${{ matrix.label }})
+    runs-on: ${{ matrix.label }}
+    timeout-minutes: 15
+
+    strategy:
+      fail-fast: false
+      matrix:
+        label:
+          # Linux
+          - ubuntu-slim
+          - ubuntu-latest
+          - ubuntu-24.04
+          - ubuntu-22.04
+          - ubuntu-24.04-arm
+          # Windows
+          - windows-latest
+          - windows-2025
+          - windows-2022
+          - windows-11-arm
+
+    env:
+      MATRIX_LABEL: ${{ matrix.label }}
+      BRANCH: ${{ github.ref_name }}
+
+    steps:
+      - name: Checkout (test/ folder only)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          sparse-checkout: |
+            test
+            benchmarks
+
+      - name: Run benchmark
+        shell: bash
+        run: |
+          PYTHON=python3
+          [[ "$RUNNER_OS" == "Windows" ]] && PYTHON=python
+          "$PYTHON" test/benchmark.py
+
+      - name: Commit result to transient folder
+        shell: bash
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          ls -la benchmarks/tmp/ 2>/dev/null || true
+
+          git add benchmarks/tmp/
+          if git diff --cached --quiet; then
+            echo "No changes."
+            exit 0
+          fi
+          git commit -m "bench: $MATRIX_LABEL"
+
+          for attempt in 1 2 3 4 5; do
+            if git pull --rebase origin "$BRANCH" && git push origin "HEAD:$BRANCH"; then
+              echo "Pushed on attempt $attempt"
+              exit 0
+            fi
+            sleep $((attempt * 3))
+          done
+          exit 1
+
+  # ===========================================================================
+  # Aggregate all results into benchmarks/SUMMARY.md
+  # ===========================================================================
+  summarize:
+    name: Summarize
+    needs: benchmark
+    runs-on: ubuntu-latest
+
+    env:
+      BRANCH: ${{ github.ref_name }}
+
+    steps:
+      - name: Checkout (test/ folder only)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          sparse-checkout: |
+            test
+            benchmarks
+
+      # Sync to the latest branch tip so we see the benchmark jobs' commits
+      - name: Sync to latest branch tip
+        shell: bash
+        run: |
+          git fetch origin "$BRANCH"
+          git reset --hard "origin/$BRANCH"
+          echo "Now at: $(git rev-parse --short HEAD) ($(git log -1 --format=%s))"
+          echo "--- benchmarks/tmp contents: ---"
+          ls -la benchmarks/tmp/ 2>/dev/null || echo "(no benchmarks/tmp directory!)"
+          echo "--- is benchmarks/ ignored? ---"
+          git check-ignore -v benchmarks/tmp/ 2>/dev/null || echo "(not ignored)"
+
+      - name: Generate SUMMARY.md and clean up
+        shell: bash
+        run: |
+          python3 test/summarize.py
+          cat benchmarks/SUMMARY.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Commit SUMMARY.md and cleanup
+        shell: bash
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -A benchmarks/
+          if git diff --cached --quiet; then
+            echo "Nothing to commit."
+            exit 0
+          fi
+          git commit -m "bench: refresh SUMMARY.md (run ${{ github.run_id }})"
+
+          for attempt in 1 2 3 4 5; do
+            if git pull --rebase origin "$BRANCH" && git push origin "HEAD:$BRANCH"; then
+              echo "Pushed on attempt $attempt"
+              exit 0
+            fi
+            sleep $((attempt * 3))
+          done
+          exit 1
