@@ -1,0 +1,14 @@
+{
+  "runner_label": "macos-15",
+  "os": "Darwin",
+  "os_version": "Darwin Kernel Version 24.6.0: Sun Oct 11 23:44:11 PDT 2026; root:xnu-11417.140.69.713.47~2/RELEASE_ARM64_VMAPPLE",
+  "arch": "arm64",
+  "python": "3.15.2",
+  "run_id": "45193682327",
+  "cpu_cores": 5,
+  "ram_gb": 14.0,
+  "cpu_bench_seconds": 0.0141,
+  "disk_write_mbps": 8329.2,
+  "disk_read_mbps": 12800.5,
+  "memory_200mb_seconds": 0.018
+}
