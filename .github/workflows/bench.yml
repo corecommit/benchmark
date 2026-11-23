@@ -25,13 +25,6 @@ jobs:
           - label: windows-2022
           - label: windows-11-arm
 
-          # ---------- macOS ----------
-          - label: macos-latest
-          - label: macos-14
-          - label: macos-15
-          - label: macos-26
-          - label: macos-15-intel
-
     runs-on: ${{ matrix.label }}
     timeout-minutes: 15
 
@@ -52,7 +45,7 @@ jobs:
 
           info = {
               "runner_label": os.environ.get("MATRIX_LABEL", "unknown"),
-              "os": platform.system(),          # Linux / Windows / Darwin
+              "os": platform.system(),          # Linux / Windows
               "os_version": platform.version(),
               "arch": platform.machine(),
               "python": platform.python_version(),
@@ -60,7 +53,7 @@ jobs:
           }
 
           # ---------- CPU model & cores ----------
-          if platform.system() in ("Linux", "Darwin"):
+          if platform.system() == "Linux":
               try:
                   with open("/proc/cpuinfo") as f:
                       for line in f:
@@ -74,7 +67,7 @@ jobs:
               info["cpu_cores"] = os.cpu_count()
               info["cpu_model"] = platform.processor()
 
-          # ---------- RAM (fixed) ----------
+          # ---------- RAM ----------
           def detect_ram_gb():
               if platform.system() == "Linux":
                   for path in (
@@ -96,14 +89,6 @@ jobs:
                               if line.startswith("MemTotal:"):
                                   return round(int(line.split()[1]) / 1024**2, 1)
                   except FileNotFoundError:
-                      pass
-              elif platform.system() == "Darwin":
-                  try:
-                      out = subprocess.check_output(
-                          ["sysctl", "-n", "hw.memsize"], stderr=subprocess.DEVNULL
-                      ).decode().strip()
-                      return round(int(out) / 1024**3, 1)
-                  except (FileNotFoundError, subprocess.CalledProcessError, ValueError):
                       pass
               elif platform.system() == "Windows":
                   try:
@@ -198,7 +183,6 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          # Ensure the transient file exists (Windows path handling)
           ls -la benchmarks/tmp/ 2>/dev/null || true
 
           git add benchmarks/tmp/
@@ -237,29 +221,28 @@ jobs:
               with open(f) as fh:
                   rows.append(json.load(fh))
 
-          OS_DISPLAY = {"Linux": "Linux", "Windows": "Windows", "Darwin": "macOS"}
+          OS_DISPLAY = {"Linux": "Linux", "Windows": "Windows"}
 
-          # Group by OS family
-          sections = {"Linux": [], "Windows": [], "macOS": []}
+          sections = {"Linux": [], "Windows": []}
           for r in rows:
               key = OS_DISPLAY.get(r.get("os"), r.get("os", "Other"))
               sections.setdefault(key, []).append(r)
 
-          # Sort within each section by runner_label
           for k in sections:
               sections[k].sort(key=lambda r: r.get("runner_label", ""))
 
-          # Compute winners across all rows
+          # Winners across all rows
           def best(metric, mode="min"):
-              vals = [(r.get(metric), r.get("runner_label")) for r in rows if r.get(metric) is not None]
+              vals = [(r.get(metric), r.get("runner_label"))
+                      for r in rows if r.get(metric) is not None]
               if not vals:
-                  return ("—", "—")
-              return (min(vals) if mode == "min" else max(vals))
+                  return (None, None)
+              return min(vals) if mode == "min" else max(vals)
 
-          cpu_win = best("cpu_bench_seconds", "min")
+          cpu_win    = best("cpu_bench_seconds", "min")
           disk_w_win = best("disk_write_mbps", "max")
           disk_r_win = best("disk_read_mbps", "max")
-          mem_win = best("memory_200mb_seconds", "min")
+          mem_win    = best("memory_200mb_seconds", "min")
 
           def fmt_pair(pair, unit=""):
               val, label = pair
@@ -299,8 +282,8 @@ jobs:
                   ]) + " |")
               return out
 
-          emoji = {"Linux": "🐧", "Windows": "🪟", "macOS": "🍎"}
-          for family in ("Linux", "Windows", "macOS"):
+          emoji = {"Linux": "🐧", "Windows": "🪟"}
+          for family in ("Linux", "Windows"):
               items = sections.get(family, [])
               if not items:
                   continue
@@ -312,7 +295,7 @@ jobs:
           with open("benchmarks/SUMMARY.md", "w") as f:
               f.write("\n".join(lines))
 
-          # Clean up ALL old JSONs (transient + legacy leftovers)
+          # Clean up all JSONs (transient + any legacy leftovers)
           for f in glob.glob("benchmarks/tmp/*.json"):
               os.remove(f)
           for f in glob.glob("benchmarks/*.json"):
