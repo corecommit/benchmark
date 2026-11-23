@@ -1,0 +1,15 @@
+{
+  "runner_label": "windows-latest",
+  "os": "Windows",
+  "os_version": "10.0.26100",
+  "arch": "AMD64",
+  "python": "3.12.10",
+  "run_id": "45212075365",
+  "cpu_model": "AMD64 Family 26 Model 2 Stepping 1, AuthenticAMD",
+  "cpu_cores": 4,
+  "ram_gb": 16.0,
+  "cpu_bench_seconds": 0.022,
+  "disk_write_mbps": 3743.0,
+  "disk_read_mbps": 3692.0,
+  "memory_200mb_seconds": 0.0194
+}
